@@ -1,9 +1,9 @@
+use crate::app::{App, GameMode};
+use crate::game::{BOARD_HEIGHT, BOARD_WIDTH};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Clear, Paragraph, List, ListItem},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
 };
-use crate::app::{App, GameMode};
-use crate::game::{BOARD_WIDTH, BOARD_HEIGHT};
 
 const ASCII_BORDER: symbols::border::Set = symbols::border::Set {
     top_left: "+",
@@ -24,9 +24,13 @@ pub fn draw(frame: &mut Frame, app: &App) {
         GameMode::MainMenu => {
             let layout = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Length(6), Constraint::Percentage(40), Constraint::Percentage(30)])
+                .constraints([
+                    Constraint::Length(6),
+                    Constraint::Percentage(40),
+                    Constraint::Percentage(30),
+                ])
                 .split(area);
-            
+
             render_ascii_title(frame, layout[0]);
 
             let items = vec![
@@ -36,42 +40,95 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 ListItem::new(" QUIT "),
             ];
             let list = List::new(items)
-                .block(Block::default().title(" MAIN MENU ").title_alignment(Alignment::Center).borders(Borders::ALL).border_set(ASCII_BORDER).border_style(Style::default().fg(Color::Cyan)))
-                .highlight_style(Style::default().bg(Color::Indexed(236)).fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                .block(
+                    Block::default()
+                        .title(" MAIN MENU ")
+                        .title_alignment(Alignment::Center)
+                        .borders(Borders::ALL)
+                        .border_set(ASCII_BORDER)
+                        .border_style(Style::default().fg(Color::Cyan)),
+                )
+                .highlight_style(
+                    Style::default()
+                        .bg(Color::Indexed(236))
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
                 .highlight_symbol("> ");
-            
-            let menu_area = centered_rect(25, 35, area);
+
+            let menu_area = centered_rect_fixed(20, 6, area);
             frame.render_stateful_widget(list, menu_area, &mut app.menu_state.clone());
-        },
+        }
         GameMode::Options => {
             let items = vec![
-                ListItem::new(format!(" Ghost: [{}] ", if app.config.show_ghost { "On" } else { "Off" })),
-                ListItem::new(format!(" Style: [{}] ", if app.config.use_fill { "[]" } else { "  " })),
+                ListItem::new(format!(
+                    " Ghost: [{}] ",
+                    if app.config.show_ghost { "On" } else { "Off" }
+                )),
+                ListItem::new(format!(
+                    " Style: [{}] ",
+                    if app.config.use_fill { "[]" } else { "  " }
+                )),
                 ListItem::new(" BACK "),
             ];
             let list = List::new(items)
-                .block(Block::default().title(" OPTIONS ").title_alignment(Alignment::Center).borders(Borders::ALL).border_set(ASCII_BORDER).border_style(Style::default().fg(Color::Yellow)))
-                .highlight_style(Style::default().bg(Color::Indexed(236)).fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                .block(
+                    Block::default()
+                        .title(" OPTIONS ")
+                        .title_alignment(Alignment::Center)
+                        .borders(Borders::ALL)
+                        .border_set(ASCII_BORDER)
+                        .border_style(Style::default().fg(Color::Yellow)),
+                )
+                .highlight_style(
+                    Style::default()
+                        .bg(Color::Indexed(236))
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )
                 .highlight_symbol("> ");
-            
-            let options_area = centered_rect(30, 25, area);
+
+            let options_area = centered_rect_fixed(20, 5, area);
             frame.render_stateful_widget(list, options_area, &mut app.options_state.clone());
-        },
+        }
         GameMode::Leaderboard => {
-            let items: Vec<ListItem> = app.leaderboard.iter().take(10).enumerate().map(|(i, (name, score))| {
-                ListItem::new(format!("{}. {:<15} {}", i + 1, name, score))
-            }).collect();
+            let items: Vec<ListItem> = app
+                .leaderboard
+                .iter()
+                .take(10)
+                .enumerate()
+                .map(|(i, (name, score))| {
+                    ListItem::new(format!("{}. {:<15} {}", i + 1, name, score))
+                })
+                .collect();
 
             let list = List::new(items)
-                .block(Block::default().title(" LEADERBOARD ").title_alignment(Alignment::Center).borders(Borders::ALL).border_set(ASCII_BORDER).border_style(Style::default().fg(Color::Green)))
+                .block(
+                    Block::default()
+                        .title(" LEADERBOARD ")
+                        .title_alignment(Alignment::Center)
+                        .borders(Borders::ALL)
+                        .border_set(ASCII_BORDER)
+                        .border_style(Style::default().fg(Color::Green)),
+                )
                 .style(Style::default().fg(Color::White));
-            
-            let board_area = centered_rect(50, 60, area);
+
+            let board_area = centered_rect_fixed(30, 12, area);
             frame.render_widget(list, board_area);
-            
-            let footer = Paragraph::new("Press Esc to return").alignment(Alignment::Center).style(Style::default().fg(Color::Gray));
-            frame.render_widget(footer, Rect { x: board_area.x, y: board_area.y + board_area.height, width: board_area.width, height: 1 });
-        },
+
+            let footer = Paragraph::new("Press Esc to return")
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::Gray));
+            frame.render_widget(
+                footer,
+                Rect {
+                    x: board_area.x,
+                    y: board_area.y + board_area.height,
+                    width: board_area.width,
+                    height: 1,
+                },
+            );
+        }
         _ => {
             // GAME UI
             let outer_layout = Layout::default()
@@ -85,7 +142,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
             // Layout: Stats (16) | Board (22) | Next (12)
             let layout = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Length(18), Constraint::Length(22), Constraint::Length(14), Constraint::Min(0)])
+                .constraints([
+                    Constraint::Length(18),
+                    Constraint::Length(22),
+                    Constraint::Length(14),
+                    Constraint::Min(0),
+                ])
                 .split(game_area);
 
             // LEFT: Stats
@@ -97,13 +159,18 @@ pub fn draw(frame: &mut Frame, app: &App) {
                     Constraint::Length(1), // High Score
                     Constraint::Length(1), // Spacer
                     Constraint::Length(8), // Controls
-                    Constraint::Min(0)
+                    Constraint::Min(0),
                 ])
                 .split(stats_area);
 
             // Subtle Score Display
             let score_line = Line::from(vec![
-                Span::styled(" SCORE ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    " SCORE ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(" "),
                 Span::styled(app.score.to_string(), Style::default().fg(Color::Yellow)),
             ]);
@@ -112,7 +179,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
             // Subtle High Score Display
             let high_score = app.leaderboard.first().map(|(_, s)| *s).unwrap_or(0);
             let high_line = Line::from(vec![
-                Span::styled(" HIGH  ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    " HIGH  ",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(" "),
                 Span::styled(high_score.to_string(), Style::default().fg(Color::Yellow)),
             ]);
@@ -129,40 +201,103 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 Line::from(" m  : Menu"),
                 Line::from(" q  : Quit"),
             ];
-            frame.render_widget(Paragraph::new(ctrl_text).style(Style::default().fg(Color::Gray)), stats_layout[3]);
+            frame.render_widget(
+                Paragraph::new(ctrl_text).style(Style::default().fg(Color::Gray)),
+                stats_layout[3],
+            );
 
             // CENTER: Game Board
             let game_width = (BOARD_WIDTH * 2 + 2) as u16;
             let game_height = (BOARD_HEIGHT + 2) as u16;
-            let game_rect = Rect { x: layout[1].x, y: layout[1].y, width: game_width, height: game_height };
-            frame.render_widget(Block::default().borders(Borders::ALL).border_set(ASCII_BORDER).border_style(Style::default().fg(Color::White)), game_rect);
+            let game_rect = Rect {
+                x: layout[1].x,
+                y: layout[1].y,
+                width: game_width,
+                height: game_height,
+            };
+            frame.render_widget(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_set(ASCII_BORDER)
+                    .border_style(Style::default().fg(Color::White)),
+                game_rect,
+            );
 
             // RIGHT: Next Piece Box
-            let next_area_rect = Rect { x: layout[2].x, y: layout[2].y, width: 14, height: 6 };
-            frame.render_widget(Block::default().title(" NEXT ").borders(Borders::ALL).border_set(ASCII_BORDER).border_style(Style::default().fg(Color::White)), next_area_rect);
+            let next_area_rect = Rect {
+                x: layout[2].x,
+                y: layout[2].y,
+                width: 14,
+                height: 6,
+            };
+            frame.render_widget(
+                Block::default()
+                    .title(" NEXT ")
+                    .borders(Borders::ALL)
+                    .border_set(ASCII_BORDER)
+                    .border_style(Style::default().fg(Color::White)),
+                next_area_rect,
+            );
             render_next_piece(frame, next_area_rect, &app.next_piece, block_symbol);
 
-            let inner_rect = Rect { x: game_rect.x + 1, y: game_rect.y + 1, width: game_width - 2, height: game_height - 2 };
+            let inner_rect = Rect {
+                x: game_rect.x + 1,
+                y: game_rect.y + 1,
+                width: game_width - 2,
+                height: game_height - 2,
+            };
 
             for y in 0..BOARD_HEIGHT {
                 for x in 0..BOARD_WIDTH {
                     if let Some(color) = app.board[y][x] {
-                        frame.render_widget(Paragraph::new(block_symbol).style(Style::default().bg(color).fg(Color::Black)), Rect { x: inner_rect.x + (x * 2) as u16, y: inner_rect.y + y as u16, width: 2, height: 1 });
+                        frame.render_widget(
+                            Paragraph::new(block_symbol)
+                                .style(Style::default().bg(color).fg(Color::Black)),
+                            Rect {
+                                x: inner_rect.x + (x * 2) as u16,
+                                y: inner_rect.y + y as u16,
+                                width: 2,
+                                height: 1,
+                            },
+                        );
                     }
                 }
             }
 
-            if app.mode != GameMode::EnteringName && !app.game_over() && app.clearing_lines.is_none() {
+            if app.mode != GameMode::EnteringName
+                && !app.game_over()
+                && app.clearing_lines.is_none()
+            {
                 if app.config.show_ghost {
                     for (x, y) in app.get_ghost_piece().global_blocks() {
                         if y >= 0 && y < BOARD_HEIGHT as i32 && x >= 0 && x < BOARD_WIDTH as i32 {
-                            frame.render_widget(Paragraph::new("[]").style(Style::default().fg(Color::DarkGray)), Rect { x: inner_rect.x + (x * 2) as u16, y: inner_rect.y + y as u16, width: 2, height: 1 });
+                            frame.render_widget(
+                                Paragraph::new("[]").style(Style::default().fg(Color::DarkGray)),
+                                Rect {
+                                    x: inner_rect.x + (x * 2) as u16,
+                                    y: inner_rect.y + y as u16,
+                                    width: 2,
+                                    height: 1,
+                                },
+                            );
                         }
                     }
                 }
                 for (x, y) in app.current_piece.global_blocks() {
                     if y >= 0 && y < BOARD_HEIGHT as i32 && x >= 0 && x < BOARD_WIDTH as i32 {
-                        frame.render_widget(Paragraph::new(block_symbol).style(Style::default().bg(app.current_piece.shape.color()).fg(Color::Black)), Rect { x: inner_rect.x + (x * 2) as u16, y: inner_rect.y + y as u16, width: 2, height: 1 });
+                        frame.render_widget(
+                            Paragraph::new(block_symbol).style(
+                                Style::default()
+                                    .bg(app.current_piece.shape.color())
+                                    .fg(Color::Black),
+                            ),
+                            Rect {
+                                x: inner_rect.x + (x * 2) as u16,
+                                y: inner_rect.y + y as u16,
+                                width: 2,
+                                height: 1,
+                            },
+                        );
                     }
                 }
             }
@@ -187,7 +322,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 ];
                 frame.render_widget(Paragraph::new(text).block(block), area);
             } else if app.mode == GameMode::GameOver {
-                render_modal(frame, " GAME OVER ", " (r)estart | (m)enu | (q)uit ", Color::Red);
+                render_modal(
+                    frame,
+                    " GAME OVER ",
+                    " (r)estart | (m)enu | (q)uit ",
+                    Color::Red,
+                );
             }
         }
     }
@@ -199,10 +339,15 @@ fn render_modal(frame: &mut Frame, title: &str, msg: &str, color: Color) {
         .borders(Borders::ALL)
         .border_set(ASCII_BORDER)
         .border_style(Style::default().fg(color));
-    
+
     let area = centered_rect_fixed(40, 5, frame.area()); // Fixed size: 40 wide, 5 high
     frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(format!("\n{}", msg)).alignment(Alignment::Center).block(block), area);
+    frame.render_widget(
+        Paragraph::new(format!("\n{}", msg))
+            .alignment(Alignment::Center)
+            .block(block),
+        area,
+    );
 }
 
 fn render_ascii_title(frame: &mut Frame, area: Rect) {
@@ -256,19 +401,16 @@ fn render_next_piece(frame: &mut Frame, area: Rect, piece: &crate::game::Piece, 
     for (bx, by) in piece.blocks {
         let x = area.x + 3 + (bx * 2) as u16; // Adjusted for 14-width box
         let y = area.y + 2 + by as u16;
-        frame.render_widget(Paragraph::new(symbol).style(Style::default().bg(color).fg(Color::Black)), Rect { x, y, width: 2, height: 1 });
+        frame.render_widget(
+            Paragraph::new(symbol).style(Style::default().bg(color).fg(Color::Black)),
+            Rect {
+                x,
+                y,
+                width: 2,
+                height: 1,
+            },
+        );
     }
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage((100 - percent_y) / 2), Constraint::Percentage(percent_y), Constraint::Percentage((100 - percent_y) / 2)])
-        .split(r);
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage((100 - percent_x) / 2), Constraint::Percentage(percent_x), Constraint::Percentage((100 - percent_x) / 2)])
-        .split(popup_layout[1])[1]
 }
 
 fn centered_rect_fixed(width: u16, height: u16, r: Rect) -> Rect {

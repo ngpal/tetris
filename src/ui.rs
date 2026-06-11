@@ -178,7 +178,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
                     .borders(Borders::ALL)
                     .border_set(ASCII_BORDER)
                     .border_style(Style::default().fg(Color::Green));
-                let area = centered_rect(40, 20, area);
+                let area = centered_rect_fixed(40, 7, area);
                 frame.render_widget(Clear, area);
                 let text = vec![
                     Line::from(format!(" Score: {}", app.score)),
@@ -199,7 +199,8 @@ fn render_modal(frame: &mut Frame, title: &str, msg: &str, color: Color) {
         .borders(Borders::ALL)
         .border_set(ASCII_BORDER)
         .border_style(Style::default().fg(color));
-    let area = centered_rect(35, 12, frame.area()); // Tighter modal
+    
+    let area = centered_rect_fixed(40, 5, frame.area()); // Fixed size: 40 wide, 5 high
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(format!("\n{}", msg)).alignment(Alignment::Center).block(block), area);
 }
@@ -268,4 +269,15 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage((100 - percent_x) / 2), Constraint::Percentage(percent_x), Constraint::Percentage((100 - percent_x) / 2)])
         .split(popup_layout[1])[1]
+}
+
+fn centered_rect_fixed(width: u16, height: u16, r: Rect) -> Rect {
+    let x = r.x + r.width.saturating_sub(width) / 2;
+    let y = r.y + r.height.saturating_sub(height) / 2;
+    Rect {
+        x,
+        y,
+        width: width.min(r.width),
+        height: height.min(r.height),
+    }
 }

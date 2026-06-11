@@ -118,7 +118,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, name: Option<Strin
                         GameMode::GameOver => match key.code {
                             KeyCode::Char('q') => app.quit(),
                             KeyCode::Char('r') => app.reset_for_game(),
-                            KeyCode::Esc => app.mode = GameMode::MainMenu,
+                            KeyCode::Char('m') | KeyCode::Esc => app.mode = GameMode::MainMenu,
                             _ => {}
                         }
                     }

@@ -1,7 +1,18 @@
 use std::fs;
+use std::path::PathBuf;
+use std::env;
 
 pub const LEADERBOARD_FILE: &str = "leaderboard.txt";
 pub const CONFIG_FILE: &str = "config.txt";
+
+fn get_data_dir() -> PathBuf {
+    let home = env::var("HOME").or_else(|_| env::var("USERPROFILE")).unwrap_or_else(|_| ".".to_string());
+    let path = PathBuf::from(home).join(".terminal-tetris");
+    if !path.exists() {
+        let _ = fs::create_dir_all(&path);
+    }
+    path
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Config {
@@ -11,7 +22,8 @@ pub struct Config {
 
 impl Config {
     pub fn load() -> Self {
-        if let Ok(content) = fs::read_to_string(CONFIG_FILE) {
+        let path = get_data_dir().join(CONFIG_FILE);
+        if let Ok(content) = fs::read_to_string(&path) {
             let mut show_ghost = true;
             let mut use_fill = true;
             for line in content.lines() {
@@ -24,28 +36,29 @@ impl Config {
                     }
                 }
             }
-            Self { show_ghost, use_fill }
-        } else {
-            Self { show_ghost: true, use_fill: true }
+            return Self { show_ghost, use_fill };
         }
+        Self { show_ghost: true, use_fill: true }
     }
 
     pub fn save(&self) {
-        let content = format!("show_ghost={}\nuse_fill={}", self.show_ghost, self.use_fill);
-        let _ = fs::write(CONFIG_FILE, content);
+        let path = get_data_dir().join(CONFIG_FILE);
+        let content = format!("show_ghost={}\nuse_fill={}\n", self.show_ghost, self.use_fill);
+        let _ = fs::write(path, content);
     }
 }
 
 pub fn load_leaderboard() -> (Vec<(String, u32)>, String) {
+    let path = get_data_dir().join(LEADERBOARD_FILE);
     let mut board = Vec::new();
     let mut last_name = String::new();
-    if let Ok(content) = fs::read_to_string(LEADERBOARD_FILE) {
+
+    if let Ok(content) = fs::read_to_string(&path) {
         let lines: Vec<&str> = content.lines().collect();
-        for line in lines {
-            if line.starts_with("LAST_NAME:") {
-                last_name = line.replace("LAST_NAME:", "").trim().to_string();
-                continue;
-            }
+        if let Some(name) = lines.get(0) {
+            last_name = name.to_string();
+        }
+        for line in lines.iter().skip(1) {
             let parts: Vec<&str> = line.split(':').collect();
             if parts.len() == 2 {
                 if let Ok(score) = parts[1].trim().parse::<u32>() {
@@ -59,9 +72,10 @@ pub fn load_leaderboard() -> (Vec<(String, u32)>, String) {
 }
 
 pub fn save_leaderboard(board: &[(String, u32)], last_name: &str) {
-    let mut results = vec![format!("LAST_NAME:{}", last_name)];
+    let path = get_data_dir().join(LEADERBOARD_FILE);
+    let mut content = format!("{}\n", last_name);
     for (name, score) in board {
-        results.push(format!("{}:{}", name, score));
+        content.push_str(&format!("{}: {}\n", name, score));
     }
-    let _ = fs::write(LEADERBOARD_FILE, results.join("\n"));
+    let _ = fs::write(path, content);
 }

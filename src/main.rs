@@ -116,6 +116,7 @@ impl Piece {
 #[derive(PartialEq, Eq)]
 enum GameMode {
     Playing,
+    Paused,
     ConfirmingRestart,
     EnteringName,
     GameOver,
@@ -193,6 +194,15 @@ impl App {
         self.last_name = last_name;
     }
 
+    fn toggle_pause(&mut self) {
+        if self.mode == GameMode::Playing {
+            self.mode = GameMode::Paused;
+        } else if self.mode == GameMode::Paused {
+            self.mode = GameMode::Playing;
+            self.last_tick = Instant::now(); // Reset tick timing on resume
+        }
+    }
+
     fn spawn_piece(&mut self) {
         let shape = Shape::all()[rand::random::<usize>() % 7];
         self.current_piece = Piece::new(shape);
@@ -218,11 +228,10 @@ impl App {
             if self.last_name.is_empty() { "Player".to_string() } else { self.last_name.clone() }
         } else {
             self.current_input.trim().to_string()
-        };
+        } ;
 
         self.last_name = name.clone();
         
-        // Single highscore per name
         let entry = self.leaderboard.entry(name).or_insert(0);
         if self.score > *entry {
             *entry = self.score;
@@ -407,12 +416,18 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<App>
                     match app.mode {
                         GameMode::Playing => match key.code {
                             KeyCode::Char('q') => app.quit(),
+                            KeyCode::Char('p') | KeyCode::Esc => app.toggle_pause(),
                             KeyCode::Char('r') => app.mode = GameMode::ConfirmingRestart,
                             KeyCode::Left => app.move_left(),
                             KeyCode::Right => app.move_right(),
                             KeyCode::Up => app.rotate(),
                             KeyCode::Down => app.tick(),
                             KeyCode::Char(' ') => app.hard_drop(),
+                            _ => {}
+                        },
+                        GameMode::Paused => match key.code {
+                            KeyCode::Char('p') | KeyCode::Esc => app.toggle_pause(),
+                            KeyCode::Char('q') => app.quit(),
                             _ => {}
                         },
                         GameMode::ConfirmingRestart => match key.code {
@@ -472,7 +487,7 @@ fn ui(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(4),
-            Constraint::Length(9),
+            Constraint::Length(10),
             Constraint::Min(0),
         ])
         .split(layout[0]);
@@ -499,6 +514,7 @@ fn ui(frame: &mut Frame, app: &App) {
         Line::from(" ↑      : Rotate"),
         Line::from(" ↓      : Soft Drop"),
         Line::from(" Space  : Hard Drop"),
+        Line::from(" p/Esc  : Pause"),
         Line::from(" r      : Restart"),
         Line::from(" q      : Quit"),
     ];
@@ -538,7 +554,6 @@ fn ui(frame: &mut Frame, app: &App) {
                     width: 2,
                     height: 1,
                 };
-                // Background color + []
                 frame.render_widget(Paragraph::new("[]").style(Style::default().bg(color).fg(Color::Black)), rect);
             }
         }
@@ -560,7 +575,7 @@ fn ui(frame: &mut Frame, app: &App) {
                 }
             }
 
-            // Render Current Piece (BG + [])
+            // Render Current Piece
             for (x, y) in app.current_piece.global_blocks() {
                 if y >= 0 && y < BOARD_HEIGHT as i32 && x >= 0 && x < BOARD_WIDTH as i32 {
                     let rect = Rect {
@@ -576,7 +591,12 @@ fn ui(frame: &mut Frame, app: &App) {
     }
 
     // MODALS
-    if app.mode == GameMode::ConfirmingRestart {
+    if app.mode == GameMode::Paused {
+        let block = Block::default().title("Paused").borders(Borders::ALL).border_style(Style::default().fg(Color::Blue));
+        let area = centered_rect(30, 20, area);
+        frame.render_widget(Clear, area);
+        frame.render_widget(Paragraph::new("\n    PAUSED\n\n  (p) to resume").alignment(Alignment::Center).block(block), area);
+    } else if app.mode == GameMode::ConfirmingRestart {
         let block = Block::default().title("Restart?").borders(Borders::ALL).border_style(Style::default().fg(Color::Yellow));
         let area = centered_rect(30, 20, area);
         frame.render_widget(Clear, area);

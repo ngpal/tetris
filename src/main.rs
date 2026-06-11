@@ -1,4 +1,6 @@
 use std::{
+    collections::HashMap,
+    fs,
     io,
     time::{Duration, Instant},
 };
@@ -11,11 +13,12 @@ use ratatui::crossterm::{
 
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph},
 };
 
 const BOARD_WIDTH: usize = 10;
 const BOARD_HEIGHT: usize = 20;
+const LEADERBOARD_FILE: &str = "leaderboard.txt";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Shape {
@@ -110,36 +113,123 @@ impl Piece {
     }
 }
 
+#[derive(PartialEq, Eq)]
+enum GameMode {
+    Playing,
+    ConfirmingRestart,
+    EnteringName,
+    GameOver,
+}
+
 struct App {
     running: bool,
+    mode: GameMode,
     board: [[Option<Color>; BOARD_WIDTH]; BOARD_HEIGHT],
     current_piece: Piece,
     score: u32,
-    game_over: bool,
+    leaderboard: HashMap<String, u32>,
+    last_name: String,
+    current_input: String,
     last_tick: Instant,
     tick_rate: Duration,
+    clearing_lines: Option<(u32, Instant)>,
 }
 
 impl App {
     fn new() -> Self {
-        let shape = Shape::all()[rand::random::<usize>() % 7];
-        Self {
+        let (leaderboard, last_name) = Self::load_leaderboard();
+        let mut app = Self {
             running: true,
+            mode: GameMode::Playing,
             board: [[None; BOARD_WIDTH]; BOARD_HEIGHT],
-            current_piece: Piece::new(shape),
+            current_piece: Piece::new(Shape::I), // placeholder
             score: 0,
-            game_over: false,
+            leaderboard,
+            last_name,
+            current_input: String::new(),
             last_tick: Instant::now(),
-            tick_rate: Duration::from_millis(500),
+            tick_rate: Duration::from_millis(800),
+            clearing_lines: None,
+        };
+        app.spawn_piece();
+        app
+    }
+
+    fn load_leaderboard() -> (HashMap<String, u32>, String) {
+        let mut board = HashMap::new();
+        let mut last_name = String::new();
+        if let Ok(content) = fs::read_to_string(LEADERBOARD_FILE) {
+            let lines: Vec<&str> = content.lines().collect();
+            if let Some(first) = lines.first() {
+                if first.starts_with("LAST_NAME:") {
+                    last_name = first.replace("LAST_NAME:", "").trim().to_string();
+                }
+            }
+            for line in lines {
+                if line.starts_with("LAST_NAME:") { continue; }
+                let parts: Vec<&str> = line.split(':').collect();
+                if parts.len() == 2 {
+                    if let Ok(score) = parts[1].trim().parse() {
+                        board.insert(parts[0].trim().to_string(), score);
+                    }
+                }
+            }
         }
+        (board, last_name)
+    }
+
+    fn save_leaderboard(&self) {
+        let mut results = vec![format!("LAST_NAME:{}", self.last_name)];
+        for (name, score) in &self.leaderboard {
+            results.push(format!("{}:{}", name, score));
+        }
+        let _ = fs::write(LEADERBOARD_FILE, results.join("\n"));
+    }
+
+    fn reset(&mut self) {
+        let (leaderboard, last_name) = Self::load_leaderboard();
+        *self = Self::new();
+        self.leaderboard = leaderboard;
+        self.last_name = last_name;
     }
 
     fn spawn_piece(&mut self) {
         let shape = Shape::all()[rand::random::<usize>() % 7];
         self.current_piece = Piece::new(shape);
         if self.is_collision(&self.current_piece) {
-            self.game_over = true;
+            self.mode = GameMode::GameOver;
+            self.check_high_score();
         }
+    }
+
+    fn check_high_score(&mut self) {
+        let is_high = self.leaderboard.get(&self.last_name).map_or(true, |&s| self.score > s) 
+            || self.leaderboard.len() < 10 
+            || self.score > *self.leaderboard.values().min().unwrap_or(&0);
+        
+        if is_high && self.score > 0 {
+            self.mode = GameMode::EnteringName;
+            self.current_input = self.last_name.clone();
+        }
+    }
+
+    fn submit_score(&mut self) {
+        let name = if self.current_input.trim().is_empty() {
+            if self.last_name.is_empty() { "Player".to_string() } else { self.last_name.clone() }
+        } else {
+            self.current_input.trim().to_string()
+        };
+
+        self.last_name = name.clone();
+        
+        // Single highscore per name
+        let entry = self.leaderboard.entry(name).or_insert(0);
+        if self.score > *entry {
+            *entry = self.score;
+        }
+
+        self.save_leaderboard();
+        self.mode = GameMode::GameOver;
     }
 
     fn is_collision(&self, piece: &Piece) -> bool {
@@ -160,20 +250,34 @@ impl App {
                 self.board[y as usize][x as usize] = Some(self.current_piece.shape.color());
             }
         }
-        self.clear_lines();
-        self.spawn_piece();
+        self.start_clear_lines();
     }
 
-    fn clear_lines(&mut self) {
-        let mut lines_cleared = 0;
+    fn start_clear_lines(&mut self) {
+        let mut lines_to_clear = 0;
+        for y in 0..BOARD_HEIGHT {
+            if (0..BOARD_WIDTH).all(|x| self.board[y][x].is_some()) {
+                lines_to_clear += 1;
+                for x in 0..BOARD_WIDTH {
+                    self.board[y][x] = Some(Color::White);
+                }
+            }
+        }
+
+        if lines_to_clear > 0 {
+            self.clearing_lines = Some((lines_to_clear, Instant::now()));
+        } else {
+            self.spawn_piece();
+        }
+    }
+
+    fn finalize_clear_lines(&mut self) {
         let mut new_board = [[None; BOARD_WIDTH]; BOARD_HEIGHT];
         let mut new_y = BOARD_HEIGHT - 1;
 
         for y in (0..BOARD_HEIGHT).rev() {
-            let full = (0..BOARD_WIDTH).all(|x| self.board[y][x].is_some());
-            if full {
-                lines_cleared += 1;
-            } else {
+            let full = (0..BOARD_WIDTH).all(|x| self.board[y][x] == Some(Color::White));
+            if !full {
                 new_board[new_y] = self.board[y];
                 if new_y > 0 {
                     new_y -= 1;
@@ -182,11 +286,20 @@ impl App {
         }
 
         self.board = new_board;
-        self.score += lines_cleared * 100;
+        if let Some((count, _)) = self.clearing_lines {
+            self.score += count * 100;
+        }
+        self.clearing_lines = None;
+        self.spawn_piece();
     }
 
     fn tick(&mut self) {
-        if self.game_over {
+        if self.mode != GameMode::Playing { return; }
+
+        if let Some((_, start)) = self.clearing_lines {
+            if start.elapsed() >= Duration::from_millis(300) {
+                self.finalize_clear_lines();
+            }
             return;
         }
 
@@ -201,6 +314,7 @@ impl App {
     }
 
     fn move_left(&mut self) {
+        if self.mode != GameMode::Playing || self.clearing_lines.is_some() { return; }
         let mut next = self.current_piece.clone();
         next.pos.0 -= 1;
         if !self.is_collision(&next) {
@@ -209,6 +323,7 @@ impl App {
     }
 
     fn move_right(&mut self) {
+        if self.mode != GameMode::Playing || self.clearing_lines.is_some() { return; }
         let mut next = self.current_piece.clone();
         next.pos.0 += 1;
         if !self.is_collision(&next) {
@@ -217,6 +332,7 @@ impl App {
     }
 
     fn rotate(&mut self) {
+        if self.mode != GameMode::Playing || self.clearing_lines.is_some() { return; }
         let next = self.current_piece.rotated();
         if !self.is_collision(&next) {
             self.current_piece = next;
@@ -224,7 +340,8 @@ impl App {
     }
 
     fn hard_drop(&mut self) {
-        while !self.game_over {
+        if self.mode != GameMode::Playing || self.clearing_lines.is_some() { return; }
+        while !self.game_over() {
             let mut next = self.current_piece.clone();
             next.pos.1 += 1;
             if self.is_collision(&next) {
@@ -233,6 +350,10 @@ impl App {
             }
             self.current_piece = next;
         }
+    }
+
+    fn game_over(&self) -> bool {
+        self.mode == GameMode::GameOver || self.mode == GameMode::EnteringName
     }
 
     fn get_ghost_piece(&self) -> Piece {
@@ -253,68 +374,135 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = setup_terminal()?;
     let app_result = run(&mut terminal);
     restore_terminal(&mut terminal)?;
-    app_result?;
-    Ok(())
-}
-
-fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
-    let mut app = App::new();
-
-    while app.running {
-        terminal.draw(|frame| ui(frame, &app))?;
-
-        let timeout = app.tick_rate.saturating_sub(app.last_tick.elapsed());
-
-        if event::poll(timeout)? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') => app.quit(),
-                        KeyCode::Left => app.move_left(),
-                        KeyCode::Right => app.move_right(),
-                        KeyCode::Up => app.rotate(),
-                        KeyCode::Down => app.tick(),
-                        KeyCode::Char(' ') => app.hard_drop(),
-                        _ => {}
-                    }
-                }
-            }
+    
+    // Print Leaderboard on quit
+    if let Ok(res) = app_result {
+        println!("\n=== LEADERBOARD ===");
+        let mut sorted: Vec<_> = res.leaderboard.iter().collect();
+        sorted.sort_by(|a, b| b.1.cmp(a.1));
+        for (i, (name, score)) in sorted.iter().take(10).enumerate() {
+            println!("{}. {:<15} {}", i + 1, name, score);
         }
-
-        if app.last_tick.elapsed() >= app.tick_rate {
-            app.tick();
-            app.last_tick = Instant::now();
-        }
+        println!("===================\n");
     }
 
     Ok(())
 }
 
+fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<App> {
+    let mut app = App::new();
+
+    while app.running {
+        terminal.draw(|frame| ui(frame, &app))?;
+
+        let timeout = if app.clearing_lines.is_some() || app.mode != GameMode::Playing {
+            Duration::from_millis(50)
+        } else {
+            app.tick_rate.saturating_sub(app.last_tick.elapsed())
+        };
+
+        if event::poll(timeout)? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    match app.mode {
+                        GameMode::Playing => match key.code {
+                            KeyCode::Char('q') => app.quit(),
+                            KeyCode::Char('r') => app.mode = GameMode::ConfirmingRestart,
+                            KeyCode::Left => app.move_left(),
+                            KeyCode::Right => app.move_right(),
+                            KeyCode::Up => app.rotate(),
+                            KeyCode::Down => app.tick(),
+                            KeyCode::Char(' ') => app.hard_drop(),
+                            _ => {}
+                        },
+                        GameMode::ConfirmingRestart => match key.code {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => app.reset(),
+                            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => app.mode = GameMode::Playing,
+                            _ => {}
+                        },
+                        GameMode::EnteringName => match key.code {
+                            KeyCode::Enter => app.submit_score(),
+                            KeyCode::Char(c) => app.current_input.push(c),
+                            KeyCode::Backspace => { app.current_input.pop(); }
+                            _ => {}
+                        },
+                        GameMode::GameOver => match key.code {
+                            KeyCode::Char('q') => app.quit(),
+                            KeyCode::Char('r') => app.reset(),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        if app.mode == GameMode::Playing {
+            if app.clearing_lines.is_some() {
+                app.tick();
+            } else if app.last_tick.elapsed() >= app.tick_rate {
+                app.tick();
+                app.last_tick = Instant::now();
+            }
+        }
+    }
+
+    Ok(app)
+}
+
 fn ui(frame: &mut Frame, app: &App) {
     let area = frame.area();
+    
+    let outer_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(area);
+
+    let title = Paragraph::new("=== TERMINAL TETRIS ===")
+        .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .alignment(Alignment::Center);
+    frame.render_widget(title, outer_layout[0]);
+
+    let game_area = outer_layout[1];
     let layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(30), Constraint::Min(20)])
-        .split(area);
+        .split(game_area);
 
-    let info_block = Block::default()
-        .title("Info")
+    let left_panel_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(4),
+            Constraint::Length(9),
+            Constraint::Min(0),
+        ])
+        .split(layout[0]);
+
+    let score_block = Block::default()
+        .title("Stats")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    
+    let high_score = app.leaderboard.values().max().unwrap_or(&0);
+    let score_text = vec![
+        Line::from(vec![Span::raw("Score:     "), Span::styled(app.score.to_string(), Style::default().fg(Color::Yellow))]),
+        Line::from(vec![Span::raw("High Score:"), Span::styled(high_score.to_string(), Style::default().fg(Color::Green))]),
+    ];
+    frame.render_widget(Paragraph::new(score_text).block(score_block), left_panel_layout[0]);
+
+    let ctrl_block = Block::default()
+        .title("Controls")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Gray));
     
-    let info_text = vec![
-        Line::from(vec![Span::raw("Score: "), Span::styled(app.score.to_string(), Style::default().fg(Color::Yellow))]),
-        Line::from(""),
-        Line::from("Controls:"),
-        Line::from("  ← / → : Move"),
-        Line::from("  ↑      : Rotate"),
-        Line::from("  ↓      : Soft Drop"),
-        Line::from("  Space  : Hard Drop"),
-        Line::from("  q      : Quit"),
+    let ctrl_text = vec![
+        Line::from(" ← / → : Move"),
+        Line::from(" ↑      : Rotate"),
+        Line::from(" ↓      : Soft Drop"),
+        Line::from(" Space  : Hard Drop"),
+        Line::from(" r      : Restart"),
+        Line::from(" q      : Quit"),
     ];
-    
-    let info = Paragraph::new(info_text).block(info_block);
-    frame.render_widget(info, layout[0]);
+    frame.render_widget(Paragraph::new(ctrl_text).block(ctrl_block), left_panel_layout[1]);
 
     let game_width = (BOARD_WIDTH * 2 + 2) as u16;
     let game_height = (BOARD_HEIGHT + 2) as u16;
@@ -327,7 +515,7 @@ fn ui(frame: &mut Frame, app: &App) {
     };
 
     let game_block = Block::default()
-        .title("Tetris")
+        .title("Board")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::White));
     
@@ -350,51 +538,87 @@ fn ui(frame: &mut Frame, app: &App) {
                     width: 2,
                     height: 1,
                 };
-                frame.render_widget(Paragraph::new("[]").style(Style::default().fg(color)), rect);
+                // Background color + []
+                frame.render_widget(Paragraph::new("[]").style(Style::default().bg(color).fg(Color::Black)), rect);
             }
         }
     }
 
-    if !app.game_over {
+    if app.mode != GameMode::EnteringName {
         // Render Ghost Piece
-        let ghost = app.get_ghost_piece();
-        for (x, y) in ghost.global_blocks() {
-            if y >= 0 && y < BOARD_HEIGHT as i32 && x >= 0 && x < BOARD_WIDTH as i32 {
-                let rect = Rect {
-                    x: inner_rect.x + (x * 2) as u16,
-                    y: inner_rect.y + y as u16,
-                    width: 2,
-                    height: 1,
-                };
-                // Dotted look or just dimmed color for ghost
-                frame.render_widget(Paragraph::new("[]").style(Style::default().fg(Color::DarkGray)), rect);
+        if !app.game_over() && app.clearing_lines.is_none() {
+            let ghost = app.get_ghost_piece();
+            for (x, y) in ghost.global_blocks() {
+                if y >= 0 && y < BOARD_HEIGHT as i32 && x >= 0 && x < BOARD_WIDTH as i32 {
+                    let rect = Rect {
+                        x: inner_rect.x + (x * 2) as u16,
+                        y: inner_rect.y + y as u16,
+                        width: 2,
+                        height: 1,
+                    };
+                    frame.render_widget(Paragraph::new("[]").style(Style::default().fg(Color::DarkGray)), rect);
+                }
             }
-        }
 
-        // Render Current Piece
-        for (x, y) in app.current_piece.global_blocks() {
-            if y >= 0 && y < BOARD_HEIGHT as i32 && x >= 0 && x < BOARD_WIDTH as i32 {
-                let rect = Rect {
-                    x: inner_rect.x + (x * 2) as u16,
-                    y: inner_rect.y + y as u16,
-                    width: 2,
-                    height: 1,
-                };
-                frame.render_widget(Paragraph::new("[]").style(Style::default().fg(app.current_piece.shape.color())), rect);
+            // Render Current Piece (BG + [])
+            for (x, y) in app.current_piece.global_blocks() {
+                if y >= 0 && y < BOARD_HEIGHT as i32 && x >= 0 && x < BOARD_WIDTH as i32 {
+                    let rect = Rect {
+                        x: inner_rect.x + (x * 2) as u16,
+                        y: inner_rect.y + y as u16,
+                        width: 2,
+                        height: 1,
+                    };
+                    frame.render_widget(Paragraph::new("[]").style(Style::default().bg(app.current_piece.shape.color()).fg(Color::Black)), rect);
+                }
             }
         }
-    } else {
-        let msg = Paragraph::new("GAME OVER")
-            .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
-            .alignment(Alignment::Center);
-        let msg_rect = Rect {
-            x: inner_rect.x,
-            y: inner_rect.y + (BOARD_HEIGHT / 2) as u16,
-            width: inner_rect.width,
-            height: 1,
-        };
-        frame.render_widget(msg, msg_rect);
     }
+
+    // MODALS
+    if app.mode == GameMode::ConfirmingRestart {
+        let block = Block::default().title("Restart?").borders(Borders::ALL).border_style(Style::default().fg(Color::Yellow));
+        let area = centered_rect(30, 20, area);
+        frame.render_widget(Clear, area);
+        frame.render_widget(Paragraph::new("\n  Restart game?\n\n  (y)es / (n)o").block(block), area);
+    } else if app.mode == GameMode::EnteringName {
+        let block = Block::default().title("New High Score!").borders(Borders::ALL).border_style(Style::default().fg(Color::Green));
+        let area = centered_rect(40, 20, area);
+        frame.render_widget(Clear, area);
+        let text = vec![
+            Line::from(format!("  Score: {}", app.score)),
+            Line::from("  Enter your name:"),
+            Line::from(format!("  > {}_", app.current_input)),
+            Line::from(""),
+            Line::from("  (Enter to submit)"),
+        ];
+        frame.render_widget(Paragraph::new(text).block(block), area);
+    } else if app.mode == GameMode::GameOver {
+        let block = Block::default().title("Game Over").borders(Borders::ALL).border_style(Style::default().fg(Color::Red));
+        let area = centered_rect(30, 20, area);
+        frame.render_widget(Clear, area);
+        frame.render_widget(Paragraph::new("\n    GAME OVER\n\n  (r)estart / (q)uit").alignment(Alignment::Center).block(block), area);
+    }
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }
 
 fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<io::Stdout>>> {
